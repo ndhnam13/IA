@@ -40,7 +40,7 @@ Sau khi RTCore64 được load thành công, mã độc thực hiện patch kern
 
 - Build đường dẫn `ntoskrnl.exe` bằng `GetSystemWindowsDirectoryW()`, đọc file trên máy vào một buffer
 
-- Gọi `RtlGetVersion` và `RtlGetNtVersionNumbers` để lấy BuildVersion, nếu <= 15000 0xFFFFF68000000000. Nếu lớn hơn thực hiện parse export directory của `ntoskrnl.exe` và hash tên export bằng CRC16-CCIT để resolve RVA của hàm `MmGetVirtualForPhysical()`
+- Gọi `RtlGetVersion` và `RtlGetNtVersionNumbers` để lấy BuildVersion, nếu <= 15000 đặt `PTE_BASE = 0xFFFFF68000000000`. Nếu lớn hơn thực hiện parse export directory của `ntoskrnl.exe` và hash tên export bằng CRC16-CCIT để resolve RVA của hàm `MmGetVirtualForPhysical()`
 
 <img width="510" height="368" alt="image" src="https://github.com/user-attachments/assets/cb715b93-5398-412d-8c66-cd1176fa446a" />
 
@@ -50,4 +50,42 @@ Sau khi RTCore64 được load thành công, mã độc thực hiện patch kern
 
 <img width="986" height="360" alt="image" src="https://github.com/user-attachments/assets/1d54986d-2f30-431d-b0d3-0c08c7a55d3b" />
 
-- `PTE_BASE` được sử dụng để mã độc có thể lấy được địa chỉ của RTCore64.sys đang được load trong kernel và patch lại mã của RTCore64.sys để load shellcode
+- Lấy ImageBase của RTCore64.sys, rồi chuẩn bị trước 2 offset là `0x1310`, đây là RVA của hàm `DispatchDeviceControl()` thực hiện dispatch IOCTL. `0x3060` offset này về sau sẽ được sử dụng làm địa chỉ IAT chứa các kernel API
+
+<img width="633" height="40" alt="image" src="https://github.com/user-attachments/assets/44ce9dd1-0884-466f-99ba-267aa923cd4b" />
+
+- Resolve 17 API từ `ntoskrnl.exe` 
+
+```
+ExAllocatePool
+IoAllocateMdl
+MmBuildMdlForNonPagedPool
+MmProbeAndLockPages
+MmMapLockedPagesSpecifyCache
+IoFreeMdl
+IoCreateDriver
+MmGetSystemRoutineAddress
+RtlFindExportedRoutineByName
+RtlInitUnicodeString
+RtlInitAnsiString
+RtlAnsiStringToUnicodeString
+RtlFreeUnicodeString
+IofCompleteRequest
+MmUnmapIoSpace
+ZwUnmapViewOfSection
+```
+
+- Sau đó mã độc chuẩn bị 2 buffer:
+  + 0x207A byte để chứa hàm thay thế `DispatchDeviceControl()` của `RTCore64.sys` phục vụ việc load rootkit của ghostemperor về sau
+  + 0x868 byte để chứa RVA của 17 API vừa được resolve
+
+Sau khi đã setup xong các dữ liệu cần thiết trong userspace, ghostemperor bắt đầu sử dụng `PTE_BASE` để thực hiện patch lại dispatch routine của `RTCore64.sys`:
+
+- Tính toán địa chỉ 2 PTE từ RVA của 2 vùng nhớ đích (RTCore64_Base + 0x1310 và RTCore64_Base + 0x3060) và `PTE_BASE` đã đọc được từ trước
+- Gửi IOCTL `0x80002048` của `RTCore64.sys` để đọc giá trị 64-bit của 2 PTE trên từ bộ nhớ, từ đó lấy được physical page frame của 2 vùng nhớ đích
+
+<img width="762" height="361" alt="image" src="https://github.com/user-attachments/assets/48a136fc-917a-49c8-9bf4-ebd66d2eaad0" />
+
+- Gửi IOCTL `0x80002040` (MmMapIoSpace) để map 2 physical frame trên thành con trỏ User-Mode có quyền read/write
+- Gửi IOCTL `0x80002044` (MmUnmapIoSpace) để đóng ánh xạ trang vật lý sau khi ghi xong
+- Hàm `DispatchDeviceControl()` gốc của `RTCore64.sys` bị thay thế bằng dispatcher của ghostEmperor, có 6 IOCTL (0x220200 - 0x220214)
