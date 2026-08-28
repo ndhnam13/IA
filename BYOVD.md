@@ -1,4 +1,6 @@
-Trươc khi thực hiện load driver, mã độc kiểm tra process avp.exe có tồn tại không bằng cách gọi hàm `ZwQuerySystemInformation()` để truy cập vào `_SYSTEM_PROCESS_INFORMATION`, hàm trả về PID của process nếu tồn tại 
+# Driver RTCore64.sys
+# Kỹ thuật BYOVD trong ghostemperor
+Trước khi thực hiện load driver, mã độc kiểm tra process avp.exe có tồn tại không bằng cách gọi hàm `ZwQuerySystemInformation()` để truy cập vào `_SYSTEM_PROCESS_INFORMATION`, hàm trả về PID của process nếu tồn tại 
 
 <img width="457" height="253" alt="image" src="https://github.com/user-attachments/assets/b460bfa3-7112-4a1e-8db2-f1f75078b716" />
 
@@ -32,7 +34,20 @@ Sau đó gọi `AdjustTokenPrivileges()` để đặt quyền `SeLoadDriverPrivi
 
 Sau khi RTCore64 được load thành công, mã độc thực hiện patch kernel để load rootkit
 
-- Gọi `ZwQuerySystemInformation`, tìm process `ntoskrnl.exe` extract địa chỉ kernel base
-- Build `ntoskrnl.exe` path bằng `GetSystemWindowsDirectoryW()`, đọc file trên máy vào một buffer
-- Gọi `RtlGetVersion` và `RtlGetNtVersionNumbers` để lấy BuildVersion, nếu <= 15000 0xFFFFF68000000000. Nếu lớn hơn thực hiện parse `ntoskrnl.exe` trong buffer vừa được allocate để tìm `MmPteBase/MiGetPteAddress` và gọi code IOCTL `0x80002048` từ RTCore64.sys để đọc giá trị của `PTE_BASE`
-- `PTE_BASE` được sử dụng để mã độc có thể 
+- Gọi `ZwQuerySystemInformation()` với `SYSTEM_INFORMATION_CLASS = 0xB` để truy cập struct [RTL_PROCESS_INFORMATION](https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntldr/rtl_process_modules.htm) và [RTL_PROCESS_MODULE_INFORMATION](https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntldr/rtl_process_module_information.htm) lấy thông tin các module được load trong hệ thống. Duyệt và tìm module có đầu `nt` và đuôi `xe` thường là `ntoskrnl.exe` và lưu lại ImageBase của module đó
+
+<img width="818" height="706" alt="image" src="https://github.com/user-attachments/assets/ecb4a7f4-d13d-4f4c-a693-c284ad6675f7" />
+
+- Build đường dẫn `ntoskrnl.exe` bằng `GetSystemWindowsDirectoryW()`, đọc file trên máy vào một buffer
+
+- Gọi `RtlGetVersion` và `RtlGetNtVersionNumbers` để lấy BuildVersion, nếu <= 15000 0xFFFFF68000000000. Nếu lớn hơn thực hiện parse export directory của `ntoskrnl.exe` và hash tên export bằng CRC16-CCIT để resolve RVA của hàm `MmGetVirtualForPhysical()`
+
+<img width="510" height="368" alt="image" src="https://github.com/user-attachments/assets/cb715b93-5398-412d-8c66-cd1176fa446a" />
+
+<img width="985" height="355" alt="image" src="https://github.com/user-attachments/assets/9e1d8fe5-1b45-4fad-b12f-80f55efd08b1" />
+
+- Gọi code IOCTL `0x80002048` từ RTCore64.sys để đọc giá trị của `PTE_BASE` từ offset 0x22 của RVA hàm `MmGetVirtualForPhysical()`. [Kĩ thuật tương tự](https://github.com/smallzhong/hide_execute_memory/blob/master/KMDF%20Driver5/memory.c)
+
+<img width="986" height="360" alt="image" src="https://github.com/user-attachments/assets/1d54986d-2f30-431d-b0d3-0c08c7a55d3b" />
+
+- `PTE_BASE` được sử dụng để mã độc có thể lấy được địa chỉ của RTCore64.sys đang được load trong kernel và patch lại mã của RTCore64.sys để load shellcode
