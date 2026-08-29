@@ -1,4 +1,5 @@
 # Driver RTCore64.sys
+
 # Kỹ thuật BYOVD trong ghostemperor
 Trước khi thực hiện load driver, mã độc kiểm tra process avp.exe có tồn tại không bằng cách gọi hàm `ZwQuerySystemInformation()` để truy cập vào `_SYSTEM_PROCESS_INFORMATION`, hàm trả về PID của process nếu tồn tại 
 
@@ -80,12 +81,18 @@ ZwUnmapViewOfSection
   + 0x868 byte để chứa RVA của 17 API vừa được resolve
 
 Sau khi đã setup xong các dữ liệu cần thiết trong userspace, ghostemperor bắt đầu sử dụng `PTE_BASE` để thực hiện patch lại dispatch routine của `RTCore64.sys`:
-
 - Tính toán địa chỉ 2 PTE từ RVA của 2 vùng nhớ đích (RTCore64_Base + 0x1310 và RTCore64_Base + 0x3060) và `PTE_BASE` đã đọc được từ trước
-- Gửi IOCTL `0x80002048` của `RTCore64.sys` để đọc giá trị 64-bit của 2 PTE trên từ bộ nhớ, từ đó lấy được physical page frame của 2 vùng nhớ đích
+- Gửi IOCTL `0x80002044` của `RTCore64.sys` để đọc giá trị của 2 PTE trên từ bộ nhớ, từ đó tính toán được physical page frame của 2 vùng nhớ đích
 
 <img width="762" height="361" alt="image" src="https://github.com/user-attachments/assets/48a136fc-917a-49c8-9bf4-ebd66d2eaad0" />
 
-- Gửi IOCTL `0x80002040` (MmMapIoSpace) để map 2 physical frame trên thành con trỏ User-Mode có quyền read/write
-- Gửi IOCTL `0x80002044` (MmUnmapIoSpace) để đóng ánh xạ trang vật lý sau khi ghi xong
-- Hàm `DispatchDeviceControl()` gốc của `RTCore64.sys` bị thay thế bằng dispatcher của ghostEmperor, có 6 IOCTL (0x220200 - 0x220214)
+- Gửi IOCTL `0x80002000` để map 2 physical frame trên thành con trỏ usermode có quyền read/write
+- Copy 2 buffer vào physical memory
+- Lúc này hàm `DispatchDeviceControl()` gốc của `RTCore64.sys` bị thay thế bằng dispatcher của ghostEmperor, có 6 IOCTL (0x220200 - 0x220214)
+- Gửi IOCTL `0x22020C` để đóng ánh xạ trang vật lý sau khi ghi xong
+
+Cuối cùng mã độc thực hiện load rootkit bằng hàm dispatcher mới:
+- Sau khi alternate dispatcher cấp phát một vùng nhớ trong Kernel (qua IOCTL `0x220204`), hàm này nhận raw buffer của payload rootkit và tiến hành map toàn bộ PE headers, sections, fix relocations, resolve import trực tiếp vào vùng nhớ kernel đó, sau đó xoá phần PE header
+- Gửi IOCTL `0x220214` để gọi IoCreateDriver tạo DRIVER_OBJECT cho rootkit với tên `\Device\UPnP Control Point`
+
+# Rootkit
