@@ -92,7 +92,12 @@ Sau khi đã setup xong các dữ liệu cần thiết trong userspace, ghostemp
 - Gửi IOCTL `0x22020C` để đóng ánh xạ trang vật lý sau khi ghi xong
 
 Cuối cùng mã độc thực hiện load rootkit bằng hàm dispatcher mới:
+- 0x220200:
+- 0x220204: Gọi `ExAllocatePool(NonPagedPool, size)` để cấp phát bộ nhớ kernel. Map vùng nhớ này vào usermode qua `MmMapLockedPagesSpecifyCache()` với `NormalPagePriority = 16`
+- 0x220208: Unmap vùng nhớ khỏi usermode `MmUnmapLockedPages()`
+- 0x22020C: Gọi `ZwUnmapViewOfSection()` để unmap một section view của process hiện tại 
+- 0x220210: Resolve địa chỉ các hàm export từ `ntoskrnl.exe` bằng `RtlFindExportedRoutineByName()` (Nếu có base address) hoặc `MmGetSystemRoutineAddress()` (Nếu không có base address)
 - Sau khi alternate dispatcher cấp phát một vùng nhớ trong Kernel (qua IOCTL `0x220204`), hàm này nhận raw buffer của payload rootkit và tiến hành map toàn bộ PE headers, sections, fix relocations, resolve import trực tiếp vào vùng nhớ kernel đó, sau đó xoá phần PE header
-- Gửi IOCTL `0x220214` để gọi IoCreateDriver tạo DRIVER_OBJECT cho rootkit với tên `\Device\UPnP Control Point`
+- 0x220214: Gọi `IoCreateDriver()` tạo `DRIVER_OBJECT` cho rootkit với tên `\Device\UPnP Control Point`. Sau khi gọi entrypoint của driver, thực hiện xoá flag `DO_DEVICE_INITIALIZING` và gán flag `DRVO_LEGACY_DRIVER` cho driver object
 
 # Rootkit
